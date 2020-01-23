@@ -1,0 +1,13 @@
+#! /bin/bash
+set +e
+
+curl -s -L https://raw.githubusercontent.com/Ajibaji/mr-shufti/master/main -o /usr/local/bin/mr-shufti
+
+chmod +x /usr/local/bin/mr-shufti
+
+clear
+
+echo "Installed and added to PATH"
+echo "Type 'mr-shufti' to run (from any directory)"
+
+exit
