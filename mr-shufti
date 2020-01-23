@@ -4,11 +4,11 @@ set +e
 cd ~/
 
 function close () {
-	rm -f tempyTemp.temp
+	rm -f shuftiTempyTemp.temp
 	cd - &> /dev/null
 }
 
-curl -s -L https://raw.githubusercontent.com/Ajibaji/mr-shufti/master/main -o tempyTemp.temp
+curl -s -L https://raw.githubusercontent.com/Ajibaji/mr-shufti/master/main -o shuftiTempyTemp.temp
 
 trap close 0 1 2 3 6 9 15
-source tempyTemp.temp
+source shuftiTempyTemp.temp
