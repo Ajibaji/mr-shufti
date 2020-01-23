@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set +e
+cd ~/
+
+function close () {
+	rm -f tempyTemp.temp
+	cd - &> /dev/null
+}
+
+curl -s -L https://raw.githubusercontent.com/Ajibaji/mr-shufti/master/main -o tempyTemp.temp
+
+trap close 0 1 2 3 6 9 15
+source tempyTemp.temp
