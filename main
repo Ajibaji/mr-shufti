@@ -24,10 +24,17 @@ function populate_namespaces_array () {
     x=1
     for line in $namespaces ;
     do
-        if [ $line != "carama-int" ]
-        then
-            namespacesArray[x]=$line
-        fi
+        namespacesArray[x]=$line
+        x=$((x+1))
+    done
+}
+
+function populate_services_array () {
+    x=1
+    for line in $(kubectl get deploy -o name --no-headers -n $chosenNamespace );
+    do
+        local serviceName=$(sed 's/deployment.extensions\//remote-/' <<< "$line")
+        servicesArray[x]="$serviceName"
         x=$((x+1))
     done
 }
@@ -40,104 +47,67 @@ function kill_existing_port_forwarding () {
 
 function monitoring_service () {
     while [ true ]; do
-        adminServiceConnection
-        blobServiceConnection
-        [[ $frontend = "true" ]] && frontendServiceConnection
-        taskManagerServiceConnection
-        userServiceConnection
-        workshopServiceConnection
+        for service in ${servicesArray[@]} ;
+        do
+            serviceConnection $service
+        done
     done
 }
 
-function adminServiceConnection () {
-    if [[ ( -z "$adminServicePortForwardPID" ) || ( ! -z "$adminServicePortForwardPID" &&  ! $(ps -o pid= -p $adminServicePortForwardPID)  ) ]]
-    then
-        kubectl port-forward svc/carama-admin-api $adminServicePort:80 -n $chosenNamespace | prepend_output $adminPortFwdSvcProcessName &
-        adminServicePortForwardPID=$!
-    fi
-}
+function serviceConnection () {
+    local serviceName=$1
 
-function blobServiceConnection () {
-    if [[ ( -z "$blobServicePortForwardPID" ) || ( ! -z "$blobServicePortForwardPID" &&  ! $(ps -o pid= -p $blobServicePortForwardPID)  ) ]]
-    then
-        kubectl port-forward svc/carama-blob-storage $blobServicePort:80 -n $chosenNamespace | prepend_output $blobPortFwdSvcProcessName &
-        blobServicePortForwardPID=$!
-    fi
-}
+    local portFwdSvcProcessNameVarName="${service}PortFwdSvcProcessName"
+    local servicePortFwdPIDVarName="${serviceName}ServicePortForwardPID"
+    local servicePortVarName="${serviceName}ServicePort"
 
-function frontendServiceConnection () {
-    if [[ ( -z "$frontendServicePortForwardPID" ) || ( ! -z "$frontendServicePortForwardPID" &&  ! $(ps -o pid= -p $frontendServicePortForwardPID)  ) ]]
-    then
-        kubectl port-forward svc/carama-frontend $frontendServicePort:80 -n $chosenNamespace | prepend_output $frontendPortFwdSvcProcessName &
-        frontendServicePortForwardPID=$!
-    fi
-}
+    local portFwdSvcProcessName="${!portFwdSvcProcessNameVarName}"
+    local servicePortForwardPID="${!servicePortFwdPIDVarName}"
+    local servicePort="${!servicePortVarName}"
 
-function taskManagerServiceConnection () {
-    if [[ ( -z "$taskManagerServicePortForwardPID" ) || ( ! -z "$taskManagerServicePortForwardPID" &&  ! $(ps -o pid= -p $taskManagerServicePortForwardPID)  ) ]]
+    if [[ ( -z "$servicePortForwardPID" ) || ( ! -z "$servicePortForwardPID" &&  ! $(ps -o pid= -p $servicePortForwardPID)  ) ]]
     then
-        kubectl port-forward svc/carama-taskmanager $taskManagerServicePort:80 -n $chosenNamespace | prepend_output $taskManagerPortFwdSvcProcessName &
-        taskManagerServicePortForwardPID=$!
-    fi
-}
-
-function workshopServiceConnection () {
-    if [[ ( -z "$workshopServicePortForwardPID" ) || ( ! -z "$workshopServicePortForwardPID" &&  ! $(ps -o pid= -p $workshopServicePortForwardPID)  ) ]]
-    then
-        kubectl port-forward svc/carama-workshop $workshopServicePort:80 -n $chosenNamespace | prepend_output $workshopPortFwdSvcProcessName & 
-        workshopServicePortForwardPID=$!
-    fi
-}
-
-function userServiceConnection () {
-    if [[ ( -z "$userServicePortForwardPID" ) || ( ! -z "$userServicePortForwardPID" &&  ! $(ps -o pid= -p $userServicePortForwardPID)  ) ]]
-    then
-        kubectl port-forward svc/carama-user $userServicePort:80 -n $chosenNamespace | prepend_output $userPortFwdSvcProcessName & 
-        userServicePortForwardPID=$!
+        kubectl port-forward svc/${serviceName} $servicePort:80 -n $chosenNamespace | prepend_output $portFwdSvcProcessName &
+        ${serviceName}ServicePortForwardPID=$!
     fi
 }
 
 function open_in_chrome () {
+    local hostRules=""
+    local servicePortVarName=""
+    for service in ${servicesArray[@]} ;
+    do
+        [[ -n $hostRules ]] && hostRules="${hostRules},"
+        servicePortVarName="${service}ServicePort"
+        hostRules="${hostRules}MAP $service 127.0.0.1:${!servicePortVarName}"
+    done
+
     mkdir "First Run"
-    /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --host-rules="MAP carama-admin-api 127.0.0.1:$adminServicePort,MAP carama-blob-storage 127.0.0.1:$blobServicePort,MAP carama-taskmanager 127.0.0.1:$taskManagerServicePort,MAP carama-user 127.0.0.1:$userServicePort,MAP carama-workshop 127.0.0.1:$workshopServicePort" --user-data-dir="./First Run" --no-first-run --disable-web-security --allow-file-access-from-files --allow-file-access http://localhost:3010 | prepend_output $frontendPortFwdSvcProcessName &
+
+    /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+      --host-rules="${hostRules}" \
+      --user-data-dir="./First Run" \
+      --no-first-run \
+      --disable-web-security \
+      --allow-file-access-from-files \
+      --allow-file-access http://localhost:3010 | prepend_output $chromeProcessName &
 }
 
 function cycle_through_services () {
     echo "Initiating trailing logs for all backend services in $chosenNamespace environment..." | prepend_output $systemProcessName
-    for deployment in $(kubectl get deploy -o name --no-headers -n $chosenNamespace );
+    for service in ${servicesArray[@]} ;
     do
-        stream_remote_log $deployment &
+        stream_remote_log $service &
     done
 }
 
 function stream_remote_log () {
-    case $1 in
-        *"carama-admin-api"*)
-            outputColour=$red
-            ;;
-        *"carama-blob"*)
-            outputColour=$purple
-            ;;
-        *"carama-taskmanager"*)
-            outputColour=$green
-            ;;
-        *"carama-user"*)
-            outputColour=$blue
-            ;;
-        *"carama-workshop"*)
-            outputColour=$purple
-            ;;
-        *)  outputColour=
-            ;;
-    esac
-
-    local serviceName=$(sed 's/deployment.extensions\//remote-/' <<< "$1")
-    local serviceName=$serviceName
+    local serviceName=$1
     local serviceName=$(tr '[:lower:]' '[:upper:]' <<< "$serviceName")
     # Pads out serviceName variable with "-" to make uniform length service names in logging output
     local serviceName=$(awk '{x=$0;for(i=length;i<24;i++)x=x "-";}END{print x}' <<< "$serviceName")
     local serviceName="$serviceName$reset"
-    local serviceName=$(sed -e "s/^/${outputColour}/" <<< "$serviceName")
+    local serviceName=$(sed -e "s/^/${purple}/" <<< "$serviceName")
     kubectl logs $1 -n $chosenNamespace --tail=$tail -f | less -S +F | prepend_output $serviceName &
 }
 
@@ -157,7 +127,6 @@ function start () {
     echo "                           AUTO-START FRONTEND = $autostart                                           "
     echo "                                    K8 LOGGING = $logging                                             "
     echo ""
-    echo "                         CARAMA_GOOGLE_API_KEY = $CARAMA_PUBLIC_GOOGLE_API_KEY                        "
     echo "                                      NODE_ENV = $NODE_ENV                                            "
     echo ""
     echo ""
@@ -167,17 +136,14 @@ function start () {
     echo ""
     echo "                        Backend services are available at http://localhost on the                     "
     echo "                           following ports for the corresponding service                              "
-    echo "                                 admin-service - http://carama-admin-api"
-    echo "                                  blob-service - http://carama-blob-storage"
-    echo "                           taskmanager-service - http://carama-taskmanager"
-    echo "                                  user-service - http://carama-user"
-    echo "                              workshop-service - http://carama-workshop"
-    echo ""
+    for service in ${servicesArray[@]} ;
+    do
+        echo "                              $service - http://${service}"
+    done
     echo ""
     echo "------------------------------------------------------------------------------------------------------"
     echo ""
-    echo ""
-    
+
     open_in_chrome
 
     if [ $logging = "true" ]
@@ -207,11 +173,11 @@ function bring_it_all_down () {
 }
 
 function show_menus () {
-	clear
+	  clear
     echo "--------------------------------------"
-	echo "  C A R A M A    N A M E S P A C E S"
-	echo "--------------------------------------"
-	i=1
+	  echo "         N A M E S P A C E S"
+	  echo "--------------------------------------"
+	  i=1
     for namespace in ${namespacesArray[@]} ;
     do
         echo $i - $namespace
@@ -226,15 +192,15 @@ function show_menus () {
 }
 
 function read_options () {
-	local choice
-	read -n 1 -p "Select namespace to run against " choice
+	  local choice
+	  read -n 1 -p "Select namespace to run against " choice
     chosenNamespace="${namespacesArray[$choice]}"
-	case $choice in
-        $option) start ;;
+	  case $choice in
+        $option) populate_services_array ;;
         s) adjust_settings ;;
-		q) bring_it_all_down ;;
-		*) echo -e "${RED}Select a number from the list or press 'q' to exit${STD}" && sleep 2
-	esac
+	  	  q) bring_it_all_down ;;
+	  	  *) echo -e "${RED}Select a number from the list or press 'q' to exit${STD}" && sleep 2
+	  esac
 }
 
 # GLOBALS
@@ -246,48 +212,48 @@ frontend="true"
 trap 'bring_it_all_down' SIGHUP SIGINT SIGQUIT SIGTERM SIGABRT
 
 # Check command line args
-while getopts nsqh option
+while getopts sqh option
 do
     case "${option}" in
-        n) chosenNamespace="carama-int" start;;
         s) frontend="false";;
         q) logging="false";;
-        h) echo "-q disables K8 logging" && exit
+        h)  echo "-s disables frontend"
+            echo "-q disables K8 logging"
+            exit
     esac
 done
 
-# Service port declarations
-adminServicePort="6001"
-blobServicePort="6002"
-frontendServicePort="3010"
-taskManagerServicePort="6004"
-userServicePort="6005"
-workshopServicePort="6006"
-
-# Process ID variable declarations
-adminServicePortForwardPID=
-blobServicePortForwardPID=
-taskManagerServicePortForwardPID=
-userServicePortForwardPID=
-workshopServicePortForwardPID=
-
 # Logging service names
-envsProcessName="${yellow}ENVS--------------------${reset}"
 systemProcessName="${yellow}SYSETM------------------"
-yarnProcessName="${yellow}YARN--------------------${reset}"
-adminPortFwdSvcProcessName="${green}PORTFWD-ADMIN-SVC-------${reset}"
-blobPortFwdSvcProcessName="${green}PORTFWD-BLOB-SVC--------${reset}"
-frontendPortFwdSvcProcessName="${white}PORTFWD-FRONTEND--------${reset}"
-taskManagerPortFwdSvcProcessName="${green}PORTFWD-TASKMNGR-SVC----${reset}"
-userPortFwdSvcProcessName="${green}PORTFWD-USER-SVC--------${reset}"
-workshopPortFwdSvcProcessName="${green}PORTFWD-WORKSHOP-SVC----${reset}"
+chromeProcessName="${red}CHROME------------------${reset}"
 
 # Namespace array
-namespaces=$(kubectl get ns | awk '{print $1}' | grep 'carama\|pr-')
+namespaces=$(kubectl get ns | awk '{print $1}')
 namespacesArray=()
 populate_namespaces_array
 len=${#namespacesArray[@]}
 option=[1-$len]
 
+# Services array
+servicesArray=()
+
 # Begin
 show_menus
+
+x=1
+for service in ${servicesArray[@]} ;
+do
+    # Process ID variable declarations
+    export ${service}ServicePortForwardPID=
+
+    # Logging service names
+    export ${service}PortFwdSvcProcessName="${green}PORTFWD-${service^^}-SVC--------${reset}"
+
+    # Service port declarations
+    export ${service}ServicePort="600${x}"
+
+    x=$((x+1))
+done
+unset x
+
+start
